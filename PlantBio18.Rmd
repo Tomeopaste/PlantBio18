@@ -1,0 +1,148 @@
+---
+title: '#PlantBio18'
+author: "Nick Tomeo"
+date: "7/24/2018"
+output: html_document
+---
+
+Twitter has an application programming interface (API) that allows you to query their tweet database and download all tweets matching your query specifications. The API makes collecting all tweets for a given hashtag relatively painless if you have a good means of interacting with it. Thankfully, there are R interfaces: the twitteR and rtweet packages. This year I used rtweet to collect all of the #PlantBio18 tweets and cannot recommend it enough if you want to try this. 
+
+### Setup
+
+```{r setup, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load up the packages 
+# If necessary install with: install.packages("rtweet")
+library("rtweet")
+library("dplyr")
+library("ggplot2")
+```
+
+### Snagging tweets
+
+To use the Twitter API you need to set up a developer account. This is a new process as of July 2018. I was able to get around it since I already had an API application and so I cannot provide guidance on how to do this. The link to setting up a developer account is here:
+https://developer.twitter.com/en/apply/user
+
+And, Michael Kearney (@kearneymw on Twitter) will probably update his intro to the rtweet package to reflect these developments, and if that happens you can find the instructions here:
+https://cran.r-project.org/web/packages/rtweet/vignettes/intro.html
+This page also provides some easy to follow instruction/examples for using the rtweet package.
+
+Assuming that you have gotten a developer account, you will be given an API access key and a secret key. You will have to provide these to rtweet for it to access the API. Once all of that is setup, you can search Tweets using whatever queries tickle your fancy.
+
+```{r search_download, echo = FALSE}
+# Save your keys to the working environment
+consumer_key = "Your_key_goes_here_as_one_long_string"
+secret_key = "Your_secret_key_goes_here_as_one_long_string"
+# In the past (and this may change with the updated API rules at Twitter) you had name your API application(s). Mine is names "plantbio18". You provide the create_token() function with your app name and your keys:
+#twitter_token = create_token(app = "plantbio18", consumer_key = my_key, #                             consumer_secret = secret_key)
+# I have commented this out so that it does not run when I run this code chunk - unless you reinstall R, it only needs to be run once.
+
+## Alright now to download tweets. Provide the search_tweets() function with 1) your search query, the "#plantbio18" hashtag in this case, 2) the number of tweets you want  returned, noting that 18k is the limit per search, and 3) since I didn't know how many tweets there might be I flipped the retry-on-rate-limit to on - this will automatically search again if you reach the 18k limit.
+
+####        pbio18 = search_tweets("#plantbio18", n = 18000, retryonratelimit = TRUE) 
+
+# NB, if you run the above code, you will not receive the tweets from the meeting. If you run it after about 26 July 2018, you probably won't receive any. The API only returns Tweets from the past seven days. I downloaded most of them on 19 July and picked up the stragglers that occured after the main meeting was complete on 23 July. 
+```
+
+### #PlantBio18 Tweets
+
+Since you cannot go back in time to download the tweets yourself, I am including them as R data files in the repository here. The files include a whole host of data that I have not explored at all. For example, you could do some text analysis with the contents of the tweets themselves, sum up the follower counts of tweeters to see the potential reach of the #plantbio18 hashtag, or look at the geographic coordinates of the tweets to see how many people were using the hashtag in the physical location of the meeting versus elsewhere in the world.
+```{r plantbio18_tweets, echo = FALSE}
+# All tweets up until 2018-07-19 14:37:18 UTC and beginning at 2018-07-09 16:30:24
+pbio18 = readRDS("tweets_thursAM_n18000_rorl.rds")
+# Straggler tweets after the meeting until 2018-07-23 21:25:48 UTC
+pbio18_supp = readRDS("tweetsUntilMonday0723.rds")
+# Cut the duplicates
+pbio18_supp1 = filter(pbio18_supp, created_at > "2018-07-19 14:37:18 UTC")
+# Add the straglers to the rest
+pbio18 = rbind(pbio18, pbio18_supp1)
+
+# I am going to reduce the number of columns to those I will work with 
+pb18 = pbio18 %>% select(
+      screen_name, created_at, text, retweet_count,
+      favorite_count, is_quote, is_retweet
+)
+# Rename columns so that they are easier for me to to specify
+names(pb18) = c("user", "dateTime", "text", "rts", "favs",
+                "is_quote", "is_rt") # add colnames back in
+pb18 = as.data.frame(pb18)
+
+# I am going to create a second data.frame to work with that aggregates the data by users/twitter-handles.
+tweeters = pb18 %>% group_by(user) %>% 
+      summarise(n = n(),
+                rts = sum(rts),
+                favs = sum(favs))
+```
+
+Now that the data is in two dataframes we can work with let's learn some things. It looks like there were `r nrow(pb18)` total tweets using the #PlantBio18 hashtag; this includes original tweets, quoted tweets, and retweets. There were `r nrow(pb18 %>% filter(is_rt == FALSE))` unique tweets (i.e., original tweets and quoted tweets), of which `r nrow(pb18 %>% filter(is_rt == FALSE) %>% filter(is_quote == FALSE))` were original tweets. There were `r length(unique(pb18$user))` different accounts that tweeted using the #PlantBio18 hashtag. `r length(tweeters$user[tweeters$n > 5])` accounts tweeted at least five times, `r length(tweeters$user[tweeters$n > 10])` tweeted at least 10 times, `r length(tweeters$user[tweeters$n > 20])` tweeted at least 20 times, `r length(tweeters$user[tweeters$n > 50])` tweeted more than 50 times, and `r length(tweeters$user[tweeters$n > 100])` tweeted more than 100 times! Wow, `r tweeters$user[tweeters$n > 100]` were awfully active!
+
+I made a number of plots that I posted to my Twitter account summarizing the meeting tweeting activity. Here is how I made those.
+
+```{r activity_over_time_plots, echo = FALSE}
+# Plot activity by day
+pb18$date = as.Date(pb18$dateTime)
+ggplot(pb18, aes(date)) + geom_bar() +
+      labs(
+      title = "#plantbio18 tweets per day (ending 7/19 10:30AM EST )",
+      x = "Day",
+      y = "# of unique tweets (tweets + quoted RT)"
+      ) +
+      theme_bw()
+# Plot activity by hour
+pbio18 %>% 
+      filter(created_at > "2018-07-12" & created_at < "2018-07-21") %>% # Cutting out the days leading up to and following the meeting
+      ts_plot("1 hours") + # Activity aggregated to 1 hour time periods
+      ggplot2::theme_bw() + # plot it
+      ggplot2::labs(
+            x = NULL, 
+            y = "Tweets + Quotes + RTs / hour",
+            title = "#PlantBio18 Tweets"
+      )
+
+
+```
+
+Most activity was unsurprisingly during the days of the meeting proper, though do note the spike in after hours collaboration activity just after midnight on several of the days.
+
+I also took a look at how active individual users/accounts were and their corresponding metrics.
+```{r account_plots, echo = FALSE}
+tweeters = arrange(tweeters, n) # sort the df high to low for visually inspecting it
+# Calculate "impact" as a composite of a user's RTs and favorites
+tweeters$impact = (tweeters$rts + tweeters$favs)/tweeters$n
+# make a df with the top tweeters
+toptweeters = tweeters %>% filter(n > 35)
+ggplot(toptweeters, aes(n, reorder(user, n))) + 
+      geom_point() +
+      scale_x_continuous(trans = "log10") +
+      xlab("# of Tweets + RTs + Quotes (log-scale)") +
+      ylab("Twitter Handle") +
+      ggtitle("#PlantBio18 tweets by user (n > 35)") +
+      theme_linedraw()
+#
+# 
+tweeters_unique = pb18 %>% 
+      filter(is_rt == FALSE) %>% 
+      group_by(user) %>% 
+      summarise(n = n(),
+                rts = sum(rts),
+                favs = sum(favs),
+                impact = (rts + favs)/n)
+tweeters_unique %>% filter(n > 15) %>% 
+      ggplot(aes(n, reorder(user, n))) + 
+            geom_point() +
+            scale_x_continuous(trans = "log10") +
+            xlab("# of unique tweets (tweets + quotes, log-scale)") +
+            ylab("Twitter Handle") +
+            ggtitle("#PlantBio18 tweets by user (n > 15)") +
+            theme_linedraw()
+
+#
+tweeters_unique %>% filter(n > 20) %>% 
+ggplot(aes(impact, reorder(user, impact))) +
+      geom_point() +
+      xlab("Impact [ (retweets + favorites) / n) ] (with n > 20)") +
+      ylab("Twitter Handle") +
+      ggtitle("#PlantBio18 unique tweet 'impact'") +
+      theme_linedraw()
+
+```
